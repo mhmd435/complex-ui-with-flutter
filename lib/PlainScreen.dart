@@ -33,8 +33,6 @@ class _PlainScreenState extends State<PlainScreen> {
       ],
       number: 2,
     );
-
-
     return Scaffold(
       body: Container(
         width: double.infinity,
@@ -60,6 +58,8 @@ class _PlainScreenState extends State<PlainScreen> {
     );
   }
 }
+
+
 class Page extends StatefulWidget {
   final int number;
   final String question;
@@ -79,6 +79,46 @@ class Page extends StatefulWidget {
 }
 
 class _PageState extends State<Page> with SingleTickerProviderStateMixin {
+  late List<GlobalKey<_ItemFaderState>> keys;
+  int selectedOptionKeyIndex = 50;
+  late AnimationController _animationController;
+
+  @override
+  void initState() {
+    super.initState();
+    keys = List.generate(
+      2 + widget.answers.length,
+          (_) => GlobalKey<_ItemFaderState>(),
+    );
+    _animationController = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 500),
+    );
+    onInit();
+  }
+
+  Future<void> animateDot(Offset startOffset) async {
+    OverlayEntry entry = OverlayEntry(
+      builder: (context) {
+        double minTop = MediaQuery.of(context).padding.top + 52;
+        return AnimatedBuilder(
+          animation: _animationController,
+          builder: (context, child) {
+            return Positioned(
+              left: 26.0 + 32 + 8,
+              top: minTop +
+                  (startOffset.dy - minTop) * (1 - _animationController.value),
+              child: child!,
+            );
+          },
+          child: Dot(),
+        );
+      },
+    );
+    Overlay.of(context)?.insert(entry);
+    await _animationController.forward(from: 0);
+    entry.remove();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -86,12 +126,22 @@ class _PageState extends State<Page> with SingleTickerProviderStateMixin {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         SizedBox(height: 32),
-        StepNumber(number: widget.number),
-        StepQuestion(question: widget.question),
+        ItemFader(key: keys[0], child: StepNumber(number: widget.number)),
+        ItemFader(
+          key: keys[1],
+          child: StepQuestion(question: widget.question),
+        ),
         Spacer(),
         ...widget.answers.map((String answer) {
-          return OptionItem(
+          int answerIndex = widget.answers.indexOf(answer);
+          int keyIndex = answerIndex + 2;
+          return ItemFader(
+            key: keys[keyIndex],
+            child: OptionItem(
               name: answer,
+              onTap: (offset) => onTap(keyIndex, offset),
+              showDot: selectedOptionKeyIndex != keyIndex,
+            ),
           );
         }),
         SizedBox(height: 64),
@@ -99,23 +149,23 @@ class _PageState extends State<Page> with SingleTickerProviderStateMixin {
     );
   }
 
-  // void onTap(int keyIndex, Offset offset) async {
-  //   for (GlobalKey<_ItemFaderState> key in keys) {
-  //     await Future.delayed(Duration(milliseconds: 40));
-  //     key.currentState?.hide();
-  //     if (keys.indexOf(key) == keyIndex) {
-  //       setState(() => selectedOptionKeyIndex = keyIndex);
-  //       animateDot(offset).then((_) => widget.onOptionSelected());
-  //     }
-  //   }
-  // }
-  //
-  // void onInit() async {
-  //   for (GlobalKey<_ItemFaderState> key in keys) {
-  //     await Future.delayed(Duration(milliseconds: 40));
-  //     key.currentState?.show();
-  //   }
-  // }
+  void onTap(int keyIndex, Offset offset) async {
+    for (GlobalKey<_ItemFaderState> key in keys) {
+      await Future.delayed(Duration(milliseconds: 40));
+      key.currentState?.hide();
+      if (keys.indexOf(key) == keyIndex) {
+        setState(() => selectedOptionKeyIndex = keyIndex);
+        animateDot(offset).then((_) => widget.onOptionSelected());
+      }
+    }
+  }
+
+  void onInit() async {
+    for (GlobalKey<_ItemFaderState> key in keys) {
+      await Future.delayed(Duration(milliseconds: 40));
+      key.currentState?.show();
+    }
+  }
 }
 
 class StepNumber extends StatelessWidget {
@@ -158,9 +208,11 @@ class StepQuestion extends StatelessWidget {
 
 class OptionItem extends StatefulWidget {
   final String name;
+  final void Function(Offset dotOffset) onTap;
+  final bool showDot;
 
   OptionItem(
-      {Key? key, required this.name})
+      {Key? key, required this.name, required this.onTap, this.showDot = true})
       : super(key: key);
 
   @override
@@ -173,12 +225,17 @@ class _OptionItemState extends State<OptionItem> {
   @override
   Widget build(BuildContext context) {
     return InkWell(
+      onTap: () {
+        RenderBox object = key1.currentContext?.findRenderObject() as RenderBox;
+        Offset globalPosition = object.localToGlobal(Offset.zero);
+        widget.onTap(globalPosition);
+      },
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
         child: Row(
           children: <Widget>[
             SizedBox(width: 26),
-            Dot(key: key1,visible: true),
+            Dot(key: key1,visible: widget.showDot),
             SizedBox(width: 26),
             Expanded(
               child: Text(
@@ -189,6 +246,69 @@ class _OptionItemState extends State<OptionItem> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class ItemFader extends StatefulWidget {
+  final Widget child;
+
+  const ItemFader({Key? key, required this.child}) : super(key: key);
+
+  @override
+  _ItemFaderState createState() => _ItemFaderState();
+}
+
+class _ItemFaderState extends State<ItemFader>
+    with SingleTickerProviderStateMixin {
+  //1 means its below, -1 means its above
+  int position = 1;
+  late AnimationController _animationController;
+  late Animation _animation;
+
+  void show() {
+    setState(() => position = 1);
+    _animationController.forward();
+  }
+
+  void hide() {
+    setState(() => position = -1);
+    _animationController.reverse();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 600),
+    );
+    _animation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOut,
+    );
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, 64 * position * (1 - _animationController.value)),
+          child: Opacity(
+            opacity: _animation.value,
+            child: child,
+          ),
+        );
+      },
+      child: widget.child,
     );
   }
 }
@@ -210,10 +330,6 @@ class Dot extends StatelessWidget {
     );
   }
 }
-
-
-
-
 
 class ArrowIcons extends StatelessWidget {
   @override
